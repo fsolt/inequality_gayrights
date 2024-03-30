@@ -9,8 +9,8 @@ output:
     pandoc_args: --lua-filter=multibib.lua
     
 title: |
-  | Measuring Tolerance of Homosexuality in the
-  | Mass Public Across Countries and Over Time
+  | Economic Inequality and
+  | Support for Gay Rights
 
 date: "`r format(Sys.time(), '%B %d, %Y')`"
 editor_options: 
@@ -81,7 +81,7 @@ header-includes:
 ```
 ```{=tex}
 \begin{abstract}
-Tolerance of homosexuality has increased in many countries over recent decades, but the resulting scholarship has been hindered by the limited available data on these trends in public opinion. To overcome this problem, we present the Tolerance of Homosexuality (TOL-H) dataset, which combines a comprehensive collection of survey data with a latent-variable model to provide annual time-series estimates of public attitudes toward homosexuality across 119 countries and over as many as 49 years that are comparable across space and time. We show these data perform well in validation tests and demonstrate their potential by replicating the influential but recently questioned finding of Andersen and Fetner (2008) that more income inequality yields less tolerance of homosexuality. We anticipate that the TOL-H data will become a crucial source for cross-regional, cross-national, and longitudinal research that improves our understanding of the sources and consequences of tolerance of homosexuality.
+[abstract]
 \end{abstract}
 ```
 
@@ -153,149 +153,6 @@ p_load(
 
 ```{r define_funs}
 # define functions
-validation_plot <- function(v_data_raw,
-                            lab_x = .38, lab_y = 92,
-                            theta_summary, theta_results,
-                            survey = TRUE) {
-    
-    # defaults per https://stackoverflow.com/a/49167744/2620381
-    if ("theta_summary" %in% ls(envir = .GlobalEnv) & missing(theta_summary))
-        theta_summary <- get("theta_summary", envir = .GlobalEnv)
-    if ("theta_results" %in% ls(envir = .GlobalEnv) & missing(theta_results))
-        theta_results <- get("theta_results", envir = .GlobalEnv)
-
-    median_val <- Vectorize(function(x) median(1:x),
-                            vectorize.args = "x")
-    if (survey) {    
-      v_vars <- v_data_raw %>% 
-        select(item0 = item) %>% 
-        unique() %>% 
-        mutate(v_val = str_extract(item0, "\\d+") %>% 
-                 as.numeric() %>% 
-                 median_val(.) %>%
-                 `+`(.6) %>% 
-                 round())
-    
-      validation_summarized <- v_data_raw %>% 
-        DCPOtools::format_dcpo(scale_q = v_vars$item0[[1]], # these arguments are required
-                               scale_cp = 1) %>% # but they don't matter
-        pluck("data") %>% 
-        mutate(item0 = str_remove(item, " \\d or higher"),
-               title = factor(v_data_raw %>%
-                                pull(title) %>%
-                                first()), 
-                              levels = v_data_raw %>%
-                                pull(title) %>%
-                                unique(),
-               neg = v_data_raw %>% 
-                 pull(neg) %>% 
-                 first) %>% 
-        right_join(v_vars, by = "item0") %>%
-        arrange(title) %>% 
-        filter(str_detect(item, paste(v_val, "or higher"))) %>%
-        mutate(iso2c = countrycode::countrycode(country,
-                                                origin = "country.name",
-                                                destination = "iso2c",
-                                                warn = FALSE),
-               prop = if_else(neg, 1-y_r/n_r, y_r/n_r),
-               se = sqrt((prop*(1-prop))/n),
-               prop_90 = prop + qnorm(.9)*se,
-               prop_10 = prop - qnorm(.9)*se) %>%
-        inner_join(theta_summary %>% select(-kk, -tt), by = c("country", "year"))
-    } else {
-      validation_summarized <- v_data_raw %>% 
-        mutate(iso2c = countrycode::countrycode(country,
-                                                origin = "country.name",
-                                                destination = "iso2c",
-                                                warn = FALSE),
-               prop = prop,
-               se = se,
-               prop_90 = prop + qnorm(.9)*se,
-               prop_10 = prop - qnorm(.9)*se) %>%
-        inner_join(theta_summary %>% select(-kk, -tt), by = c("country", "year"))
-    }
-    
-    validation_cor <- theta_results %>%
-      inner_join(validation_summarized %>%
-                   select(country, year, title, prop, se),
-                 by = c("country", "year")) %>% 
-      rowwise() %>% 
-      mutate(sim = rnorm(1, mean = prop, sd = se)) %>% 
-      ungroup() %>% 
-      select(title, theta, sim, draw) %>% 
-      nest(data = c(theta, sim)) %>% 
-      mutate(r = lapply(data, function(df) cor(df)[2,1]) %>% 
-               unlist()) %>%
-      select(-data) %>% 
-      group_by(title) %>% 
-      summarize(r = paste("R =", sprintf("%.2f", round(mean(r), 2))))
-
-    if ({validation_summarized %>%
-        pull(country) %>%
-        unique() %>% 
-        length()} > 1) {
-      val_plot <- validation_summarized %>%
-        ggplot(aes(x = mean,
-                   y = prop * 100)) +
-        geom_segment(aes(x = q10, xend = q90,
-                         y = prop * 100, yend = prop * 100),
-                     na.rm = TRUE,
-                     alpha = .2) +
-        geom_segment(aes(x = mean, xend = mean,
-                         y = prop_90 * 100, yend = prop_10 * 100),
-                     na.rm = TRUE,
-                     alpha = .2) +
-        geom_smooth(method = 'lm', formula = 'y ~ x', se = FALSE) +
-        facet_wrap(~ title, ncol = 4) +
-        geom_label(data = validation_cor, aes(x = lab_x,
-                                              y = lab_y,
-                                              label = r),
-                   size = 2)
-    } else {
-      val_plot <- validation_summarized %>%
-        ggplot(aes(x = year,
-                   y = mean)) +
-        geom_line() +
-        geom_ribbon(aes(ymin = q10,
-                        ymax = q90,
-                        linetype = NA),
-                    alpha = .2) +
-        geom_point(aes(y = prop),
-                   fill = "black",
-                   shape = 21,
-                   size = .5,
-                   na.rm = TRUE) +
-        geom_path(aes(y = prop),
-                  linetype = 3,
-                  na.rm = TRUE,
-                  alpha = .7) +
-        geom_segment(aes(x = year, xend = year,
-                         y = prop_90, yend = prop_10),
-                     na.rm = TRUE,
-                     alpha = .2) +
-        facet_wrap(~ title, ncol = 4) +
-        geom_label(data = validation_cor, aes(x = lab_x,
-                                              y = lab_y,
-                                              label = r),
-                   size = 2)
-    }
-    
-    return(val_plot)
-}
-
-covered_share_of_spanned <- function(dcpo_input_raw) {
-  n_cy <- dcpo_input_raw %>%
-    distinct(country, year) %>% 
-    nrow()
-  
-  spanned_cy <- dcpo_input_raw %>% 
-    group_by(country) %>% 
-    summarize(years = max(year) - min(year) + 1) %>% 
-    summarize(n = sum(years)) %>% 
-    pull(n)
-  
-  {(n_cy/spanned_cy) * 100}
-}
 
 get_coef <- function(iv, results_df = coef_data, type = "both", width = .95) {
   result_var <- results_df %>% 
